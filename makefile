@@ -26,7 +26,7 @@ GOLDFLAGS := -ldflags "-X $(PACKAGE_NAME)/pkg/util.AppGitCommit=${GIT_COMMIT} -X
 # Alias targets
 ###############
 
-build: go_dep go_test appoptics_controller # docker_build
+build: go_dep go_test medusa # docker_build
 verify: go_verify
 #push: build docker_push
 
@@ -80,7 +80,3 @@ go_fmt:
 #	docker tag $(REGISTRY)/$(APP_NAME):$(BUILD_TAG) $(REGISTRY)/$(APP_NAME):$(IMAGE_TAG) ; \
 #	docker push $(REGISTRY)/$(APP_NAME):$(IMAGE_TAG);
 #
-#create_secret:
-#	ansible-vault decrypt secret/solarwinds-appoptics_controllercontrollerrobot-secret.yml.enc \
-#		--vault-password-file=secret/vault-secret \
-#		--output=- | kubectl apply -f - --namespace $(NAMESPACE)
