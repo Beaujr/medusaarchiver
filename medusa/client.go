@@ -1,20 +1,25 @@
 package medusa
 
 import (
+	"crypto/tls"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/anaskhan96/soup"
-	"net/http"
-	"encoding/json"
-	"strconv"
-	"crypto/tls"
 	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 )
 
-const medusaRoot = "http://localhost:8081"
-const medusaToken = "<INSERT TOKEN>"
+var medusa = flag.String("medusaUrl", "http://192.168.1.112:8081/sickrage", "Medusa URL ie. <protocol>://<url>:<port>/<path>")
+var token = flag.String("token", "apikey", "Medusa API Token")
+
 const archivedStatus = "6"
 const downloadedStatus = "4"
 const searchStatus = "Downloaded"
+
 type Medusa interface {
 	getTVShowsWithDownloadedEpStatus() ([]Series, error)
 	changeEpisodeStatus(tvid string, season string, id string) error
@@ -26,17 +31,17 @@ type Client struct {
 }
 
 type Episode struct {
-	season string
+	season  string
 	episode string
 }
 
 type Series struct {
 	name string
-	id string
+	id   string
 }
 
-func(med *Client) getTVShowsWithDownloadedEpStatus() ([]Series, error) {
-	soupHtml, err  := soup.GetWithClient(fmt.Sprintf("%s/%s%s", medusaRoot,"manage/episodeStatuses?whichStatus=", downloadedStatus), &med.client)
+func (med *Client) getTVShowsWithDownloadedEpStatus() ([]Series, error) {
+	soupHtml, err := soup.GetWithClient(fmt.Sprintf("%s/%s%s", *medusa, "manage/episodeStatuses?whichStatus=", downloadedStatus), &med.client)
 	if err != nil {
 		return nil, err
 	}
@@ -52,15 +57,18 @@ func(med *Client) getTVShowsWithDownloadedEpStatus() ([]Series, error) {
 	return ids, nil
 }
 
-func(med *Client) getEpisodesWithDownloadedStatus(tvid string) ([]Episode, error){
-	url := fmt.Sprintf("%s/%s%s%s%s", medusaRoot,"api/",medusaToken,"/?cmd=show.seasons&tvdbid=", tvid)
-	soupResponse, err  := soup.GetWithClient(url, &med.client)
+func (med *Client) getEpisodesWithDownloadedStatus(tvid string) ([]Episode, error) {
+	url := fmt.Sprintf("%s/%s%s%s%s", *medusa, "api/", *token, "/?cmd=show.seasons&tvdbid=", tvid)
+	soupResponse, err := soup.GetWithClient(url, &med.client)
 	if err != nil {
 		return nil, err
 	}
 	jsonResponse := make(map[string]interface{})
 
-	json.Unmarshal([]byte(soupResponse), &jsonResponse)
+	err = json.Unmarshal([]byte(soupResponse), &jsonResponse)
+	if err != nil {
+		return nil, err
+	}
 	episodeIds := make([]Episode, 0)
 
 	if success, ok := jsonResponse["result"]; ok && success.(string) == "success" {
@@ -97,26 +105,44 @@ func(med *Client) getEpisodesWithDownloadedStatus(tvid string) ([]Episode, error
 }
 
 func (med *Client) changeEpisodeStatus(tvid string, season string, id string) error {
-	apiUrl := fmt.Sprintf("home/setStatus?indexername=tvdb&seriesid=%s&eps=s%se%s&status=%s",  tvid, season, id, archivedStatus)
-	url := fmt.Sprintf("%s/%s", medusaRoot, apiUrl)
-	_, err  := soup.GetWithClient(url, &med.client)
+	url := fmt.Sprintf("%s/api/v2/series/tvdb%s/episodes", *medusa, tvid)
+
+	payload := strings.NewReader(fmt.Sprintf("{\"s%se%s\":{\"status\":%s}}", season, id, archivedStatus))
+
+	req, err := http.NewRequest("PATCH", url, payload)
 	if err != nil {
 		return err
 	}
-	return nil
+
+	req.Header.Add("content-type", "application/json")
+	req.Header.Add("x-api-key", *token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+	return err
 }
 
-func StartUpdate () {
+func StartUpdate() error {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	client := http.Client{Transport:http.DefaultTransport.(*http.Transport)}
-	mClient := Client{client:client}
-	tvShowIds, _ := mClient.getTVShowsWithDownloadedEpStatus()
+	client := http.Client{Transport: http.DefaultTransport.(*http.Transport), Timeout: time.Second * 10}
+	mClient := Client{client: client}
+	tvShowIds, err := mClient.getTVShowsWithDownloadedEpStatus()
+	if err != nil {
+		return err
+	}
 
 	for _, show := range tvShowIds {
 		episodeIds, _ := mClient.getEpisodesWithDownloadedStatus(show.id)
 		for _, episode := range episodeIds {
 			log.Printf("Show: %s, Season: %s, Episode: %s", show.name, episode.season, episode.episode)
-			mClient.changeEpisodeStatus(show.id, episode.season, episode.episode)
+			err := mClient.changeEpisodeStatus(show.id, episode.season, episode.episode)
+			if err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
