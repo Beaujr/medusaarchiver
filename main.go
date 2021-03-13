@@ -1,8 +1,15 @@
 package main
 
-import "github.com/beaujr/medusaarchiver/medusa"
+import (
+	"flag"
+	"github.com/beaujr/medusaarchiver/medusa"
+	"log"
+)
 
 func main() {
-	medusa.StartUpdate()
+	flag.Parse()
+	err := medusa.StartUpdate()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
-
