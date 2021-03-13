@@ -124,6 +124,7 @@ func (med *httpClient) changeEpisodeStatus(tvid string, season string, id string
 	defer res.Body.Close()
 	return err
 }
+
 // StartUpdate will execute the search for downloaded status episodes and convert them to archived
 func StartUpdate() error {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
