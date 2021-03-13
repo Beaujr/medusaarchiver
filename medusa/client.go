@@ -20,7 +20,7 @@ const archivedStatus = "6"
 const downloadedStatus = "4"
 const searchStatus = "Downloaded"
 
-type Medusa interface {
+type medusaApi interface {
 	getTVShowsWithDownloadedEpStatus() ([]medusaSeries, error)
 	changeEpisodeStatus(tvid string, season string, id string) error
 	getEpisodesWithDownloadedStatus(tvid string) ([]medusaEpisode, error)
@@ -124,7 +124,7 @@ func (med *httpClient) changeEpisodeStatus(tvid string, season string, id string
 	defer res.Body.Close()
 	return err
 }
-
+// StartUpdate will execute the search for downloaded status episodes and convert them to archived
 func StartUpdate() error {
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	client := http.Client{Transport: http.DefaultTransport.(*http.Transport), Timeout: time.Second * 10}
