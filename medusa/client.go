@@ -5,25 +5,22 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/anaskhan96/soup"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
 
-var medusa = flag.String("medusaUrl", "http://192.168.1.112:8081/sickrage", "Medusa URL ie. <protocol>://<url>:<port>/<path>")
+var medusa = flag.String("medusaUrl", "http://192.168.1.216:8081/sickrage", "Medusa URL ie. <protocol>://<url>:<port>/<path>")
 var token = flag.String("token", "apikey", "Medusa API Token")
-var target = flag.String("target", "6", "Target Id for status, ex: 6")
-var current = flag.String("current", "4", "Target Id for status, ex: 4")
+var target = flag.Int("target", 6, "Target Id for status, ex: 6")
+var current = flag.Int("current", 4, "Target Id for status, ex: 4")
 
 // MedusaApi interface for interacting with medusa
 type MedusaApi interface {
-	getTVShowsWithDownloadedEpStatus() ([]medusaSeries, error)
-	changeEpisodeStatus(tvid string, season string, id string) error
-	getEpisodesWithDownloadedStatus(tvid string) ([]medusaEpisode, error)
+	getTVShowsWithDownloadedEpStatus() ([]medusaUpdateStatusShowsPayload, error)
+	changeEpisodeStatus(payload medusaUpdateStatusPayload) error
 	process() error
 	getStatusMap() (map[string]string, error)
 }
@@ -48,20 +45,58 @@ type medusaSeries struct {
 	id   string
 }
 
-func (med *httpClient) getTVShowsWithDownloadedEpStatus() ([]medusaSeries, error) {
-	soupHtml, err := soup.GetWithClient(fmt.Sprintf("%s/%s%s", *medusa, "manage/episodeStatuses?whichStatus=", *current), &med.client)
+type medusaUpdateStatusPayload struct {
+	Status int                              `json:"status"`
+	Shows  []medusaUpdateStatusShowsPayload `json:"shows"`
+}
+
+type medusaUpdateStatusShowsPayload struct {
+	Slug     string   `json:"slug"`
+	Episodes []string `json:"episodes"`
+}
+
+func (med *httpClient) getTVShowsWithDownloadedEpStatus() ([]medusaUpdateStatusShowsPayload, error) {
+	url := fmt.Sprintf("%s/%s%d", *medusa, "api/v2/internal/getEpisodeStatus?status=", *current)
+	ids := make([]medusaUpdateStatusShowsPayload, 0)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Add("content-type", "application/json")
+	req.Header.Add("x-api-key", *token)
+	req.Header.Add("cache-control", "no-cache")
+	res, err := http.DefaultClient.Do(req)
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+	jsonResponse := make(map[string]interface{})
 	if err != nil {
 		return nil, err
 	}
-	rootHtml := soup.HTMLParse(soupHtml)
-	roots := rootHtml.FindAll("input", "class", "pull-right")
-	ids := make([]medusaSeries, 0)
-	for _, root := range roots {
-		if val, ok := root.Attrs()["data-series-id"]; ok {
-			ids = append(ids, medusaSeries{id: val, name: root.FindPrevElementSibling().Text()})
+	if res != nil && res.StatusCode != http.StatusOK {
+		log.Print(res.StatusCode)
+	}
+	err = json.Unmarshal(body, &jsonResponse)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range jsonResponse {
+		for k, v := range v.(map[string]interface{}) {
+			value := v.(map[string]interface{})
+			name := value["name"].(string)
+			episodes := value["episodes"].([]interface{})
+			downloadStatusEps := make([]string, 0)
+			log.Println(name)
+			for _, ep := range episodes {
+				epMap := ep.(map[string]interface{})
+				slug := epMap["slug"].(string)
+				downloadStatusEps = append(downloadStatusEps, slug)
+				log.Println(slug)
+
+			}
+			show := &medusaUpdateStatusShowsPayload{
+				Slug:     k,
+				Episodes: downloadStatusEps,
+			}
+			ids = append(ids, *show)
 		}
 	}
-
 	return ids, nil
 }
 
@@ -102,63 +137,15 @@ func (med *httpClient) getStatusMap() (map[string]string, error) {
 
 }
 
-func (med *httpClient) getEpisodesWithDownloadedStatus(tvid string) ([]medusaEpisode, error) {
-	statuses, err := med.getStatusMap()
+func (med *httpClient) changeEpisodeStatus(payload medusaUpdateStatusPayload) error {
+	url := fmt.Sprintf("%s/api/v2/internal/updateEpisodeStatus", *medusa)
+	out, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	url := fmt.Sprintf("%s/%s%s%s%s", *medusa, "api/", *token, "/?cmd=show.seasons&tvdbid=", tvid)
-	soupResponse, err := soup.GetWithClient(url, &med.client)
-	if err != nil {
-		return nil, err
-	}
-	jsonResponse := make(map[string]interface{})
+	stringPayload := strings.NewReader(string(out))
 
-	err = json.Unmarshal([]byte(soupResponse), &jsonResponse)
-	if err != nil {
-		return nil, err
-	}
-	episodeIds := make([]medusaEpisode, 0)
-
-	if success, ok := jsonResponse["result"]; ok && success.(string) == "success" {
-		if data, ok := jsonResponse["data"]; ok {
-			seasonData := data.(map[string]interface{})
-			seasonNumber := 0
-			for {
-				seasonNumber++
-				seasonString := strconv.Itoa(seasonNumber)
-				if episodes, ok := seasonData[seasonString]; ok {
-					episodesData := episodes.(map[string]interface{})
-					episodeNumber := 0
-					for {
-						episodeNumber++
-						episodeString := strconv.Itoa(episodeNumber)
-						if episode, ok := episodesData[episodeString]; ok {
-
-							if status, ok := episode.(map[string]interface{})["status"]; ok && status == statuses[*current] {
-								episodeIds = append(episodeIds, medusaEpisode{season: seasonString, episode: episodeString})
-							}
-						} else {
-							break
-						}
-					}
-
-				} else {
-					break
-				}
-			}
-
-		}
-	}
-	return episodeIds, nil
-}
-
-func (med *httpClient) changeEpisodeStatus(tvid string, season string, id string) error {
-	url := fmt.Sprintf("%s/api/v2/series/tvdb%s/episodes", *medusa, tvid)
-
-	payload := strings.NewReader(fmt.Sprintf("{\"s%se%s\":{\"status\":%s}}", season, id, *target))
-
-	req, err := http.NewRequest("PATCH", url, payload)
+	req, err := http.NewRequest("POST", url, stringPayload)
 	if err != nil {
 		return err
 	}
@@ -171,24 +158,24 @@ func (med *httpClient) changeEpisodeStatus(tvid string, season string, id string
 	}
 
 	defer res.Body.Close()
-	return err
+	if res != nil && res.StatusCode != 200 {
+		return fmt.Errorf("Server responded with status code: %d", res.StatusCode)
+	}
+	return nil
 }
 
 func (med *httpClient) process() error {
-	tvShowIds, err := med.getTVShowsWithDownloadedEpStatus()
+	medusaShows, err := med.getTVShowsWithDownloadedEpStatus()
 	if err != nil {
 		return err
 	}
-
-	for _, show := range tvShowIds {
-		episodeIds, _ := med.getEpisodesWithDownloadedStatus(show.id)
-		for _, episode := range episodeIds {
-			log.Printf("Show: %s, Season: %s, medusaEpisode: %s", show.name, episode.season, episode.episode)
-			err := med.changeEpisodeStatus(show.id, episode.season, episode.episode)
-			if err != nil {
-				return err
-			}
-		}
+	updatePayload := medusaUpdateStatusPayload{
+		Status: *target,
+		Shows:  medusaShows,
+	}
+	err = med.changeEpisodeStatus(updatePayload)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -196,7 +183,7 @@ func (med *httpClient) process() error {
 // StartUpdate will execute the search for downloaded status episodes and convert them to archived
 func StartUpdate() error {
 	mClient := newMedusaApi()
-	//err := mClient.process()
-	_, err := mClient.getStatusMap()
+	err := mClient.process()
+	//_, err = mClient.getStatusMap()
 	return err
 }
