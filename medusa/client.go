@@ -66,6 +66,9 @@ func (med *httpClient) getTVShowsWithDownloadedEpStatus() ([]medusaUpdateStatusS
 	defer res.Body.Close()
 	body, _ := ioutil.ReadAll(res.Body)
 	jsonResponse := make(map[string]interface{})
+	if err != nil {
+		return nil, err
+	}
 	if res != nil && res.StatusCode != http.StatusOK {
 		log.Print(res.StatusCode)
 	}
@@ -137,6 +140,9 @@ func (med *httpClient) getStatusMap() (map[string]string, error) {
 func (med *httpClient) changeEpisodeStatus(payload medusaUpdateStatusPayload) error {
 	url := fmt.Sprintf("%s/api/v2/internal/updateEpisodeStatus", *medusa)
 	out, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
 	stringPayload := strings.NewReader(string(out))
 
 	req, err := http.NewRequest("POST", url, stringPayload)
